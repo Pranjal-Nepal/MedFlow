@@ -1,5 +1,3 @@
-// ─── Page 2: Data Workbench & Mathematical Engine ────────────────────────────
-
 import React, { useState } from 'react';
 import { FlaskConical, Calculator, ChevronDown } from 'lucide-react';
 import { useMedFlow } from '../store';
@@ -50,7 +48,6 @@ const Workbench: React.FC = () => {
       <div className="page-title"><FlaskConical size={20} />Data Workbench & Mathematical Engine</div>
 
       <div className="grid-2">
-        {/* Intake Form */}
         <div className="card">
           <div className="section-title mb-16"><FlaskConical size={14} />Clinical Patient Intake Triage</div>
           <form onSubmit={handleSubmit} className="flex-col gap-12">
@@ -117,7 +114,6 @@ const Workbench: React.FC = () => {
           </form>
         </div>
 
-        {/* Strategy + Weights */}
         <div className="flex-col gap-16">
           <div className="card">
             <div className="section-title mb-12"><Calculator size={14} />Strategy Switchboard</div>
@@ -161,7 +157,6 @@ const Workbench: React.FC = () => {
         </div>
       </div>
 
-      {/* Formula Inspector */}
       <div className="card card-accent">
         <div className="section-title mb-12"><Calculator size={14} />Mathematical Formula Inspector</div>
         <div className="formula-box mb-12" style={{ fontSize: 13, color: 'var(--cyan)', letterSpacing: 0.3 }}>

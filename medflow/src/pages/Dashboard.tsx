@@ -1,5 +1,3 @@
-// ─── Page 1: Operations Command Dashboard ────────────────────────────────────
-
 import React from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar
@@ -8,7 +6,6 @@ import { LayoutDashboard, BedDouble, Stethoscope, Wind, Scan, Users, Activity } 
 import { useMedFlow } from '../store';
 import { Resource, ResourceType } from '../types';
 
-// ── Resource Icons ────────────────────────────────────────────────────────────
 const RESOURCE_ICONS: Record<ResourceType, React.ReactNode> = {
   'Acute ER Bays':      <BedDouble size={16} />,
   'ICU Critical Beds':  <Activity size={16} />,
@@ -20,7 +17,7 @@ const RESOURCE_ICONS: Record<ResourceType, React.ReactNode> = {
 };
 
 const DEPARTMENTS = ['Trauma ER', 'ICU', 'OR Suites', 'Cardiology', 'Neurology', 'Orthopedics'];
-const DEPT_LOAD = [72, 87, 50, 45, 63, 38]; // simulated headroom %
+const DEPT_LOAD = [72, 87, 50, 45, 63, 38];
 
 const BENCHMARK_DATA = [
   { metric: 'Avg Wait (min)',    'Dynamic': 18, 'Urgency': 22, 'Capacity': 31, 'FCFS': 45 },
@@ -29,7 +26,6 @@ const BENCHMARK_DATA = [
   { metric: 'Throughput/hr',    'Dynamic': 14, 'Urgency': 11, 'Capacity': 9, 'FCFS': 12 },
 ];
 
-// ── Resource Card ─────────────────────────────────────────────────────────────
 const ResourceCard: React.FC<{ resource: Resource }> = ({ resource: r }) => {
   const pct = r.total > 0 ? (r.occupied / r.total) * 100 : 0;
   const isCritical = pct >= 90;
@@ -57,26 +53,22 @@ const ResourceCard: React.FC<{ resource: Resource }> = ({ resource: r }) => {
   );
 };
 
-// ── ESI Badge ─────────────────────────────────────────────────────────────────
 const ESIBadge: React.FC<{ esi: number }> = ({ esi }) => (
   <span className={`esi-badge esi-${esi}`}>{esi}</span>
 );
 
-// ── Dashboard ─────────────────────────────────────────────────────────────────
 const Dashboard: React.FC = () => {
   const { resources, patients, throughput, allocateBed, strategy } = useMedFlow();
   const queue = patients.filter(p => !p.allocated).sort((a, b) => b.score - a.score);
 
   return (
     <div className="flex-col gap-20">
-      {/* Header */}
       <div className="page-title">
         <LayoutDashboard size={20} />
         Operations Command Dashboard
         <span className="tag tag-info" style={{ marginLeft: 8 }}>LIVE</span>
       </div>
 
-      {/* Resource Capacity Grid */}
       <div>
         <div className="section-header">
           <div className="section-title"><Activity size={15} />Live Resource Capacity</div>
@@ -86,9 +78,7 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Charts Row */}
       <div className="grid-2">
-        {/* Throughput Chart */}
         <div className="card">
           <div className="section-title mb-12"><Activity size={14} />Patient Intake vs Discharge (Hourly)</div>
           <ResponsiveContainer width="100%" height={200}>
@@ -115,7 +105,6 @@ const Dashboard: React.FC = () => {
           </ResponsiveContainer>
         </div>
 
-        {/* Department Headroom */}
         <div className="card">
           <div className="section-title mb-12"><Activity size={14} />Department Headroom Telemetry</div>
           {DEPARTMENTS.map((dept, i) => {
@@ -134,7 +123,6 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Triage Queue */}
       <div className="card">
         <div className="section-header">
           <div className="section-title"><Users size={15} />Real-Time Triage Queue · <span className="text-accent">{strategy}</span></div>
@@ -189,7 +177,6 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Benchmark Matrix */}
       <div className="card">
         <div className="section-title mb-12"><Activity size={14} />Scheduling Strategy Benchmark Comparison</div>
         <div className="table-wrap">

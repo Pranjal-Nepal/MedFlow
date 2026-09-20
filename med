@@ -1,5 +1,3 @@
-// ─── MEDFLOW App Root ─────────────────────────────────────────────────────────
-
 import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
@@ -18,7 +16,6 @@ import './index.css';
 
 const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { role } = useMedFlow();
-  // Patient and family sessions get no clinical sidebar — just the main content
   if (isPortalRole(role)) {
     return (
       <div className="app-shell">
@@ -40,7 +37,6 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   );
 };
 
-/** Clinical console route — staff sessions only. */
 const StaffRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { role } = useMedFlow();
   if (!role) return <Navigate to="/login" replace />;
@@ -48,11 +44,6 @@ const StaffRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return <AppShell>{children}</AppShell>;
 };
 
-/**
- * Portal route. A patient or family session must carry the id of the record it
- * is bound to; without one there is nothing legitimate to show, so it goes back
- * to sign-in rather than falling through to a browsable patient list.
- */
 const PortalRoute: React.FC = () => {
   const { role, authedPatientId } = useMedFlow();
   if (!role) return <Navigate to="/login" replace />;
@@ -64,7 +55,6 @@ const PortalRoute: React.FC = () => {
   );
 };
 
-/** Sends an already-authenticated session straight to the screen it may use. */
 const LoginRoute: React.FC = () => {
   const { role, authedPatientId } = useMedFlow();
   if (!role) return <LoginPage />;
@@ -77,16 +67,14 @@ const LoginRoute: React.FC = () => {
 const App: React.FC = () => {
   const { darkMode, tickClock, tickWaitTimes, tickAmbulances } = useMedFlow();
 
-  // Apply theme class to root
   useEffect(() => {
     document.documentElement.className = darkMode ? '' : 'light-mode';
   }, [darkMode]);
 
-  // Simulation ticks
   useEffect(() => {
-    const clockTick = setInterval(tickClock, 1000);          // sim clock: 1s = 1 sim-min
-    const waitTick  = setInterval(tickWaitTimes, 30000);     // wait times: every 30s
-    const emsTick   = setInterval(tickAmbulances, 1000);     // EMS countdown: every 1s
+    const clockTick = setInterval(tickClock, 1000);
+    const waitTick  = setInterval(tickWaitTimes, 30000);
+    const emsTick   = setInterval(tickAmbulances, 1000);
     return () => { clearInterval(clockTick); clearInterval(waitTick); clearInterval(emsTick); };
   }, [tickClock, tickWaitTimes, tickAmbulances]);
 
@@ -107,20 +95,16 @@ const App: React.FC = () => {
         }}
       />
       <Routes>
-        {/* Login – no shell */}
         <Route path="/login" element={<LoginRoute />} />
 
-        {/* Clinical console: director + clinical staff only */}
         <Route path="/" element={<StaffRoute><Dashboard /></StaffRoute>} />
         <Route path="/workbench" element={<StaffRoute><Workbench /></StaffRoute>} />
         <Route path="/ems" element={<StaffRoute><EMSPage /></StaffRoute>} />
         <Route path="/sentinel" element={<StaffRoute><SentinelPage /></StaffRoute>} />
         <Route path="/nurse-triage" element={<StaffRoute><NurseTriage /></StaffRoute>} />
 
-        {/* Patient portal: bound patient/family sessions, plus a read-only staff view */}
         <Route path="/portal" element={<PortalRoute />} />
 
-        {/* Fallback */}
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>

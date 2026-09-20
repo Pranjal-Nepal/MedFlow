@@ -1,11 +1,9 @@
-// ─── Navbar Component ─────────────────────────────────────────────────────────
-
 import React from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { Activity, Moon, Sun, LogOut } from 'lucide-react';
 import { useMedFlow } from '../store';
 
 const TelemetrySVG: React.FC<{ load: number }> = ({ load }) => {
-  // Simple ECG-style micro-telemetry SVG
   const pts = [0,2,2,4,8,0,-4,0,2,2,0].map((y, i) => `${i * 8},${20 - y * (load / 100) * 3}`).join(' ');
   return (
     <svg width="88" height="24" className="telemetry-svg">
@@ -16,6 +14,7 @@ const TelemetrySVG: React.FC<{ load: number }> = ({ load }) => {
 
 const Navbar: React.FC = () => {
   const { simTime, resources, patients, diversionActive, darkMode, toggleTheme, logout, authedUser } = useMedFlow();
+  const { pathname } = useLocation();
   const icu = resources.find(r => r.type === 'ICU Critical Beds')!;
   const icuPct = Math.round((icu.occupied / icu.total) * 100);
   const queueCount = patients.filter(p => !p.allocated).length;
@@ -23,11 +22,11 @@ const Navbar: React.FC = () => {
 
   return (
     <nav className="navbar">
-      <div className="navbar-brand">
+      <Link to={pathname} className="navbar-brand" title="MEDFLOW — stay on this screen">
         <Activity size={18} />
         MED<span>FLOW</span>
         <span className="navbar-tagline">Prioritize Patients. Optimize Resources</span>
-      </div>
+      </Link>
       <div className="navbar-spacer" />
       <TelemetrySVG load={icuPct} />
       <div className="navbar-pill">

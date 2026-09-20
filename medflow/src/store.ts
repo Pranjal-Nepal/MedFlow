@@ -1,13 +1,19 @@
 // ─── Global Reactive State Store (Zustand) ───────────────────────────────────
 
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { v4 as uuid } from 'uuid';
 import toast from 'react-hot-toast';
 import {
   Patient, Resource, AmbulanceUnit, AuditEvent, ThroughputPoint,
-  ChatMessage, Strategy, Role, ESILevel, Department, ResourceType, AuditEventType
+  ChatMessage, Strategy, Role, ESILevel, Department, ResourceType, AuditEventType,
+  AuthResult, NewPatientInput, PatientReport, PatientReportKind, PortalAccess, StaffRole
 } from './types';
 import { computeScore, sortByStrategy, overallUtilization } from './engine';
+import {
+  authenticateStaff, canActOnPatientRecord, deriveDateOfBirth, deriveMrn,
+  findPatientByCredentials, findPatientByFamilyCode,
+} from './auth';
 
 // ── Seed Data ─────────────────────────────────────────────────────────────────
 
@@ -24,13 +30,19 @@ const INITIAL_RESOURCES: Resource[] = [
 const mkPatient = (
   name: string, age: number, esi: ESILevel, condition: string,
   dept: Department, res: ResourceType, risk: number, waitMins: number
-): Patient => ({
-  id: uuid(), name, age, esi, condition, department: dept,
-  targetResource: res,
-  vitals: { bp: `${110 + Math.floor(Math.random()*40)}/${70 + Math.floor(Math.random()*20)}`, hr: 60 + Math.floor(Math.random()*60), spo2: 88 + Math.floor(Math.random()*12), temp: parseFloat((36.5 + Math.random()*2).toFixed(1)) },
-  deteriorationRisk: risk, arrivalTime: Date.now() - waitMins * 60000,
-  waitMinutes: waitMins, score: 0, allocated: false,
-});
+): Patient => {
+  const id = uuid();
+  return {
+    id,
+    mrn: deriveMrn(id),
+    dob: deriveDateOfBirth(id, age),
+    name, age, esi, condition, department: dept,
+    targetResource: res,
+    vitals: { bp: `${110 + Math.floor(Math.random()*40)}/${70 + Math.floor(Math.random()*20)}`, hr: 60 + Math.floor(Math.random()*60), spo2: 88 + Math.floor(Math.random()*12), temp: parseFloat((36.5 + Math.random()*2).toFixed(1)) },
+    deteriorationRisk: risk, arrivalTime: Date.now() - waitMins * 60000,
+    waitMinutes: waitMins, score: 0, allocated: false,
+  };
+};
 const SEED_PATIENTS: Patient[] = [
   mkPatient('James Harlow',   54, 1, 'STEMI – Cardiac Arrest',        'ICU',       'ICU Critical Beds',  0.92, 8),
   mkPatient('Priya Sharma',   31, 2, 'Severe Respiratory Distress',   'Trauma ER', 'Acute ER Bays',      0.74, 22),
@@ -58,10 +70,18 @@ const SEED_THROUGHPUT: ThroughputPoint[] = Array.from({ length: 12 }, (_, i) => 
 // ── Store Interface ───────────────────────────────────────────────────────────
 
 interface MedFlowState {
-  // Auth
+  // Auth — every session is bound to exactly one principal
   role: Role | null;
   authedUser: string;
-  login: (role: Role, name: string) => void;
+  /** The single patient record this session may read; null for staff. */
+  authedPatientId: string | null;
+  /** 'full' only for a signed-in patient acting on their own record. */
+  portalAccess: PortalAccess;
+  loginAsStaff: (role: StaffRole, email: string, password: string) => AuthResult;
+  loginAsPatient: (mrn: string, dob: string) => AuthResult;
+  loginAsFamily: (familyCode: string) => AuthResult;
+  /** Raises a self-service report for the session's own record, or refuses. */
+  submitPatientReport: (patientId: string, report: PatientReport) => AuthResult;
   logout: () => void;
 
   // Theme
@@ -82,7 +102,8 @@ interface MedFlowState {
   weights: { wu: number; ww: number; wr: number };
   setStrategy: (s: Strategy) => void;
   setWeights: (w: Partial<{ wu: number; ww: number; wr: number }>) => void;
-  addPatient: (p: Omit<Patient, 'id' | 'score' | 'allocated' | 'arrivalTime' | 'waitMinutes'>) => void;
+  /** Registers a patient and returns the record with its issued portal identity. */
+  addPatient: (p: NewPatientInput) => Patient;
   allocateBed: (patientId: string) => void;
   dischargePatient: (patientId: string) => void;
   tickWaitTimes: () => void;
@@ -138,16 +159,81 @@ const generateAIResponse = (msg: string, resources: Resource[], patients: Patien
   return `SENTINEL AI analysis: ${patients.length} patients in system, ${criticalCount} critical. ICU load ${icuLoad}%. Recommend prioritizing ESI 1-2 allocations and monitoring deterioration risk scores above 0.75. All systems nominal.`;
 };
 
+// ── Patient Report Ledger Mapping ─────────────────────────────────────────────
+
+const REPORT_META: Record<PatientReportKind, { type: AuditEventType; severity: 'info' | 'warning' | 'critical'; label: string }> = {
+  pain_alert:     { type: 'THRESHOLD', severity: 'critical', label: 'Pain / deterioration alert raised' },
+  message:        { type: 'THRESHOLD', severity: 'warning',  label: 'Message to triage nurse' },
+  symptoms:       { type: 'THRESHOLD', severity: 'warning',  label: 'Symptom update' },
+  comfort:        { type: 'TRIAGE',    severity: 'info',     label: 'Comfort request' },
+  family_checkin: { type: 'TRIAGE',    severity: 'info',     label: 'Family waiting-room check-in' },
+};
+
+const REPORT_TOAST_DURATION = { success: 3000, error: 6000 } as const;
+
 // ── Store Implementation ──────────────────────────────────────────────────────
 
-export const useMedFlow = create<MedFlowState>((set, get) => ({
+const SESSION_STORAGE_KEY = 'medflow.session';
+const SESSION_STORAGE_VERSION = 1;
+
+export const useMedFlow = create<MedFlowState>()(
+  persist(
+    (set, get) => ({
   role: null,
   authedUser: '',
-  login: (role, name) => {
-    set({ role, authedUser: name });
-    get().addAudit('TRIAGE', `${name} logged in as ${role}`, 'info', name);
+  authedPatientId: null,
+  portalAccess: 'readonly',
+
+  loginAsStaff: (staffRole, email, password) => {
+    const account = authenticateStaff(staffRole, email, password);
+    if (!account) return { ok: false, error: 'Invalid email or password for this role.' };
+    set({ role: staffRole, authedUser: account.name, authedPatientId: null, portalAccess: 'readonly' });
+    get().addAudit('TRIAGE', `${account.name} signed in as ${staffRole}`, 'info', account.name);
+    return { ok: true };
   },
-  logout: () => set({ role: null, authedUser: '' }),
+
+  loginAsPatient: (mrn, dob) => {
+    const match = findPatientByCredentials(get().patients, mrn, dob);
+    if (!match) return { ok: false, error: 'No patient record matches that MRN and date of birth.' };
+    set({ role: 'patient', authedUser: match.name, authedPatientId: match.id, portalAccess: 'full' });
+    get().addAudit('TRIAGE', `${match.name} signed in to the patient portal (MRN ${match.mrn})`, 'info', match.name);
+    return { ok: true };
+  },
+
+  loginAsFamily: (familyCode) => {
+    const match = findPatientByFamilyCode(get().patients, familyCode);
+    if (!match) return { ok: false, error: 'That family access code is not valid.' };
+    set({
+      role: 'family',
+      authedUser: `Family of ${match.name}`,
+      authedPatientId: match.id,
+      portalAccess: 'readonly',
+    });
+    get().addAudit('TRIAGE', `Family member signed in with the share code for ${match.name} (read-only)`, 'info', `Family of ${match.name}`);
+    return { ok: true };
+  },
+
+  /**
+   * The single choke point for patient-authored writes. Anything that is not the
+   * bound patient acting on their own record is refused here, regardless of what
+   * the UI renders.
+   */
+  submitPatientReport: (patientId, report) => {
+    const session = get();
+    if (!canActOnPatientRecord(session, patientId)) {
+      return { ok: false, error: 'You are not authorised to act on this patient record.' };
+    }
+    const patient = session.patients.find(p => p.id === patientId);
+    if (!patient) return { ok: false, error: 'Your patient record is no longer available.' };
+
+    const meta = REPORT_META[report.kind];
+    session.addAudit(meta.type, `${meta.label} — ${report.message}`, meta.severity, patient.name);
+    if (report.toastLevel === 'error') toast.error(report.toast, { duration: REPORT_TOAST_DURATION.error });
+    else toast.success(report.toast, { duration: REPORT_TOAST_DURATION.success });
+    return { ok: true };
+  },
+
+  logout: () => set({ role: null, authedUser: '', authedPatientId: null, portalAccess: 'readonly' }),
 
   darkMode: true,
   toggleTheme: () => set(s => ({ darkMode: !s.darkMode })),
@@ -170,8 +256,13 @@ export const useMedFlow = create<MedFlowState>((set, get) => ({
 
   addPatient: (p) => {
     const { resources, weights, addAudit } = get();
+    const id = uuid();
     const newPatient: Patient = {
-      ...p, id: uuid(), score: 0, allocated: false,
+      ...p,
+      id,
+      mrn: deriveMrn(id),
+      dob: deriveDateOfBirth(id, p.age),
+      score: 0, allocated: false,
       arrivalTime: Date.now(), waitMinutes: 0,
     };
     newPatient.score = computeScore(newPatient, resources, weights);
@@ -179,6 +270,7 @@ export const useMedFlow = create<MedFlowState>((set, get) => ({
     addAudit('TRIAGE', `New patient ${p.name} (ESI ${p.esi}) triaged to ${p.department}`, p.esi <= 2 ? 'critical' : p.esi === 3 ? 'warning' : 'info', 'Triage Nurse');
     if (p.esi === 1) toast.error(`🚨 ESI-1 CRITICAL: ${p.name} – Immediate intervention required!`, { duration: 6000 });
     else if (p.esi === 2) toast(`⚠️ ESI-2 Urgent: ${p.name} triaged to ${p.department}`, { duration: 4000 });
+    return newPatient;
   },
 
   allocateBed: (patientId) => {
@@ -354,4 +446,15 @@ export const useMedFlow = create<MedFlowState>((set, get) => ({
     addAudit('FAILURE', '⚙️ CT Scanner tube failure (2 units offline) + OR Theatre HVAC shutdown (1 theatre offline)', 'critical', 'Facilities');
     toast.error('⚙️ EQUIPMENT FAILURE: CT Scanner & OR Theatre offline', { duration: 6000 });
   },
-}));
+    }),
+    {
+      name: SESSION_STORAGE_KEY,
+      version: SESSION_STORAGE_VERSION,
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => {
+        const { simTime, ...persisted } = state;
+        return persisted;
+      },
+    }
+  )
+);

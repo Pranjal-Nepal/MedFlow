@@ -1,14 +1,9 @@
-// ─── Nurse Triage Intake – Smart Walk-In Patient Registration ────────────────
-// Nurse enters condition + vitals → system auto-suggests ESI, dept, resource
-// → live priority score preview → one-click register into queue
-
 import React, { useState, useMemo } from 'react';
 import { Stethoscope, Zap, CheckCircle, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useMedFlow } from '../store';
 import { computeScore, ESI_URGENCY, sigmoid } from '../engine';
 import { Department, ESILevel, ResourceType } from '../types';
 
-// ── Condition → ESI / Dept / Resource inference rules ────────────────────────
 interface TriageRule {
   keywords: string[];
   esi: ESILevel;
@@ -60,7 +55,6 @@ const TRIAGE_RULES: TriageRule[] = [
     esi: 5, department: 'Orthopedics',resource:'Acute ER Bays',      risk: 0.08 },
 ];
 
-// Vitals-based ESI escalation
 const escalateByVitals = (
   esi: ESILevel, hr: number, spo2: number, sbp: number, temp: number
 ): { esi: ESILevel; flags: string[] } => {
@@ -94,7 +88,6 @@ const ESI_META: Record<ESILevel, { label: string; color: string; bg: string; wai
 const DEPARTMENTS: Department[]   = ['Trauma ER','ICU','OR Suites','Cardiology','Neurology','Orthopedics'];
 const RESOURCES:   ResourceType[] = ['Acute ER Bays','ICU Critical Beds','Operating Theatres','Physicians','Nurses','Ventilators','CT Scanners'];
 
-// ── Component ─────────────────────────────────────────────────────────────────
 const NurseTriage: React.FC = () => {
   const { addPatient, resources, weights, patients } = useMedFlow();
 
@@ -107,22 +100,18 @@ const NurseTriage: React.FC = () => {
     temp: '' as string | number,
   });
 
-  // Derived suggestion state
   const [overrideESI,  setOverrideESI]  = useState<ESILevel | null>(null);
   const [overrideDept, setOverrideDept] = useState<Department | null>(null);
   const [overrideRes,  setOverrideRes]  = useState<ResourceType | null>(null);
-  const [submitted, setSubmitted]       = useState<string | null>(null); // patient name after submit
+  const [submitted, setSubmitted]       = useState<string | null>(null);
 
-  // Parse vitals
   const hr   = Number(form.hr)   || 80;
   const spo2 = Number(form.spo2) || 98;
   const temp = Number(form.temp) || 37.0;
   const sbp  = parseInt(form.bp?.split('/')[0]) || 120;
 
-  // Infer from condition text
   const inferred = useMemo(() => inferFromCondition(form.condition), [form.condition]);
 
-  // Vitals escalation on top of inferred ESI
   const baseESI: ESILevel = overrideESI ?? inferred?.esi ?? 3;
   const { esi: finalESI, flags: vitalFlags } = useMemo(
     () => escalateByVitals(baseESI, hr, spo2, sbp, temp),
@@ -133,13 +122,11 @@ const NurseTriage: React.FC = () => {
   const finalRes  = overrideRes  ?? inferred?.resource   ?? 'Acute ER Bays';
   const finalRisk = inferred?.risk ?? 0.3;
 
-  // Live score preview
   const previewScore = useMemo(() => computeScore(
     { esi: finalESI, waitMinutes: 0, deteriorationRisk: finalRisk, targetResource: finalRes },
     resources, weights
   ), [finalESI, finalRisk, finalRes, resources, weights]);
 
-  // Queue position preview — how many unallocated patients have higher score
   const queueAhead = useMemo(
     () => patients.filter(p => !p.allocated && p.score > previewScore).length,
     [patients, previewScore]
@@ -162,7 +149,6 @@ const NurseTriage: React.FC = () => {
       deteriorationRisk: finalRisk,
     });
     setSubmitted(form.name.trim());
-    // Reset
     setForm({ name: '', age: '', condition: '', hr: '', spo2: '', bp: '', temp: '' });
     setOverrideESI(null); setOverrideDept(null); setOverrideRes(null);
     setTimeout(() => setSubmitted(null), 5000);
@@ -182,7 +168,6 @@ const NurseTriage: React.FC = () => {
         <span className="tag tag-info" style={{ marginLeft: 8 }}>Nurse Portal</span>
       </div>
 
-      {/* Success banner */}
       {submitted && (
         <div style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid var(--success)', borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10 }}>
           <CheckCircle size={18} style={{ color: 'var(--success)', flexShrink: 0 }} />
@@ -195,12 +180,10 @@ const NurseTriage: React.FC = () => {
 
       <div className="grid-2" style={{ alignItems: 'start' }}>
 
-        {/* ── Left: Input Form ── */}
         <div className="card">
           <div className="section-title mb-16"><Stethoscope size={14} />Patient Information</div>
           <form onSubmit={handleSubmit} className="flex-col gap-14">
 
-            {/* Name + Age */}
             <div className="form-grid">
               <div className="form-group">
                 <label className="form-label">Full Name *</label>
@@ -217,7 +200,6 @@ const NurseTriage: React.FC = () => {
               </div>
             </div>
 
-            {/* Condition — the key field that drives inference */}
             <div className="form-group">
               <label className="form-label">Chief Complaint / Condition *</label>
               <input className="form-input" value={form.condition}
@@ -235,7 +217,6 @@ const NurseTriage: React.FC = () => {
               )}
             </div>
 
-            {/* Vitals */}
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
               <div className="section-title mb-12" style={{ fontSize: 12 }}>Vitals <span className="text-muted" style={{ fontWeight: 400, fontSize: 11 }}>(used to escalate ESI if critical)</span></div>
               <div className="form-grid">
@@ -266,7 +247,6 @@ const NurseTriage: React.FC = () => {
               </div>
             </div>
 
-            {/* Manual overrides */}
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
               <div className="section-title mb-12" style={{ fontSize: 12 }}>Override Suggestions <span className="text-muted" style={{ fontWeight: 400, fontSize: 11 }}>(optional)</span></div>
               <div className="form-grid">
@@ -307,11 +287,8 @@ const NurseTriage: React.FC = () => {
             </div>
           </form>
         </div>
+<div className="flex-col gap-16">
 
-        {/* ── Right: Live Priority Preview ── */}
-        <div className="flex-col gap-16">
-
-          {/* ESI Result Card */}
           <div className="card" style={{ border: `2px solid ${esiMeta.color}`, background: esiMeta.bg }}>
             <div className="flex items-center justify-between mb-12">
               <div className="section-title" style={{ color: esiMeta.color }}>
@@ -322,7 +299,6 @@ const NurseTriage: React.FC = () => {
               )}
             </div>
 
-            {/* Big ESI display */}
             <div className="flex items-center gap-16 mb-16">
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 64, fontWeight: 900, color: esiMeta.color, lineHeight: 1, fontFamily: 'JetBrains Mono' }}>
@@ -338,7 +314,6 @@ const NurseTriage: React.FC = () => {
               </div>
             </div>
 
-            {/* Vital flags */}
             {vitalFlags.length > 0 && (
               <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid var(--danger)', borderRadius: 6, padding: '8px 12px', marginBottom: 12 }}>
                 <div className="flex items-center gap-6 mb-4">
@@ -351,7 +326,6 @@ const NurseTriage: React.FC = () => {
               </div>
             )}
 
-            {/* Priority Score */}
             <div style={{ background: 'var(--bg-elevated)', borderRadius: 8, padding: 12 }}>
               <div className="flex items-center justify-between mb-8">
                 <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Computed Priority Score</span>
@@ -371,7 +345,6 @@ const NurseTriage: React.FC = () => {
             </div>
           </div>
 
-          {/* Queue Position Preview */}
           <div className="card">
             <div className="section-title mb-12">Estimated Queue Position</div>
             <div className="flex items-center gap-16">
@@ -389,7 +362,6 @@ const NurseTriage: React.FC = () => {
             </div>
           </div>
 
-          {/* Score breakdown */}
           <div className="card">
             <div className="section-title mb-10" style={{ fontSize: 12 }}>Score Breakdown</div>
             <div className="formula-box">
@@ -411,7 +383,6 @@ const NurseTriage: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick reference */}
           <div className="card">
             <div className="section-title mb-10" style={{ fontSize: 12 }}>ESI Quick Reference</div>
             {([1,2,3,4,5] as ESILevel[]).map(l => (

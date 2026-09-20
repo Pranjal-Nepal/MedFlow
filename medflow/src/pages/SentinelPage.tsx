@@ -1,5 +1,3 @@
-// ─── Page 4: Sentinel AI Operations Hub & Audit Ledger ───────────────────────
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Bot, Send, Shield, Clock, Filter } from 'lucide-react';
 import { useMedFlow } from '../store';
@@ -45,7 +43,6 @@ const SentinelPage: React.FC = () => {
       <div className="page-title"><Bot size={20} />Sentinel AI Operations Hub</div>
 
       <div className="grid-2">
-        {/* AI Chat */}
         <div className="card card-accent">
           <div className="section-title mb-12">
             <Bot size={14} />
@@ -79,7 +76,6 @@ const SentinelPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick prompts */}
           <div className="mt-12">
             <div className="text-xs text-muted mb-8">Quick Prompts:</div>
             <div className="flex-col gap-4">
@@ -92,14 +88,12 @@ const SentinelPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Audit Ledger */}
         <div className="card">
           <div className="section-header">
             <div className="section-title"><Shield size={14} />Immutable Audit Ledger</div>
             <span className="tag tag-info">{auditLog.length} events</span>
           </div>
 
-          {/* Filter */}
           <div className="flex gap-6 mb-12" style={{ flexWrap: 'wrap' }}>
             {(['ALL', 'TRIAGE', 'BED_ALLOC', 'THRESHOLD', 'DIVERSION', 'SURGE', 'FAILURE', 'AI_ACTION'] as const).map(t => (
               <button
