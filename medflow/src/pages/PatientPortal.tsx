@@ -1,12 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Clock, AlertTriangle, CheckCircle, Info, Bell, Share2, Copy, MessageSquare, Activity, MapPin, Car, FileText, UserPlus, Globe, Heart, LogOut, Lock } from 'lucide-react';
+import { Users, Clock, AlertTriangle, CheckCircle, Info, Bell, Share2, Copy, MessageSquare, Activity, MapPin, Car, FileText, UserPlus, Globe, Heart, LogOut, Lock, Send } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useMedFlow } from '../store';
 import { deriveFamilyCode, formatDobForDisplay } from '../auth';
-import { PatientReport } from '../types';
+import { PatientReport, PortalMessage } from '../types';
 import { TRANSLATIONS, LANG_OPTIONS, Lang } from '../i18n';
 
-type TabId = 'status' | 'communicate' | 'info' | 'family';
+type TabId = 'status' | 'communicate' | 'info' | 'family' | 'waiting-room' | 'faq';
+
+const URGENCY_COLORS: Record<string, string> = {
+  critical: 'var(--danger)',
+  high: 'var(--warning)',
+  medium: 'var(--cyan)',
+  low: 'var(--text-muted)',
+};
+
+const URGENCY_LABELS: Record<string, string> = {
+  critical: 'CRITICAL',
+  high: 'HIGH',
+  medium: 'MEDIUM',
+  low: 'LOW',
+};
 
 const ESI_META: Record<number, { label: string; color: string; wait: string; plain: string }> = {
   1: { label: 'Resuscitation', color: '#ef4444', wait: 'Immediate', plain: 'Your condition is life-threatening. You are our absolute highest priority and are being seen right now.' },
@@ -21,11 +35,12 @@ const TIMELINE_STEPS = ['step_checkin', 'step_triage', 'step_doctor', 'step_trea
 const COMFORT_ITEMS = ['Blanket', 'Water', 'Wheelchair', 'Extra Pillow', 'Phone Charger', 'Translator'];
 
 const PatientPortal: React.FC = () => {
-  const { patients, role, portalAccess, authedUser, authedPatientId, submitPatientReport, logout } = useMedFlow();
+  const { patients, role, portalAccess, authedUser, authedPatientId, submitPatientReport, logout, sendPortalMessage, getSortedPortalMessages } = useMedFlow();
   const [lang, setLang] = useState<Lang>('en');
   const t = (k: string) => TRANSLATIONS[lang][k] || k;
 
   const isStaffView = role === 'director' || role === 'clinical';
+  const isFamilyView = role === 'family';
   const isBoundSession = !isStaffView;
   const canCommunicate = role === 'patient' && portalAccess === 'full';
 
@@ -33,6 +48,7 @@ const PatientPortal: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('status');
   const [alertSent, setAlertSent] = useState(false);
   const [message, setMessage] = useState('');
+  const [roomNumber, setRoomNumber] = useState('ER-1');
   const [symptom, setSymptom] = useState('');
   const [symptomSeverity, setSymptomSeverity] = useState(5);
   const [codeCopied, setCodeCopied] = useState(false);
@@ -47,6 +63,7 @@ const PatientPortal: React.FC = () => {
   const staffSelection = patients.some(p => p.id === staffPatientId) ? staffPatientId : (patients[0]?.id ?? '');
   const boundPatientId = isStaffView ? staffSelection : (authedPatientId ?? '');
   const patient = patients.find(p => p.id === boundPatientId);
+  const sortedMessages = patient ? getSortedPortalMessages(patient.id) : [];
 
   const queuedPatients = patients.filter(p => !p.allocated).sort((a, b) => b.score - a.score);
   const queuePosition = patient && !patient.allocated ? queuedPatients.findIndex(p => p.id === patient.id) + 1 : null;
@@ -74,8 +91,12 @@ const PatientPortal: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!canCommunicate && (activeTab === 'communicate' || activeTab === 'family')) setActiveTab('status');
+    if (!canCommunicate && activeTab !== 'status' && activeTab !== 'info') setActiveTab('status');
   }, [canCommunicate, activeTab]);
+
+  useEffect(() => {
+    if (isFamilyView && activeTab !== 'status' && activeTab !== 'waiting-room' && activeTab !== 'info' && activeTab !== 'faq') setActiveTab('status');
+  }, [isFamilyView, activeTab]);
 
   const raiseReport = (report: PatientReport): boolean => {
     if (!patient) return false;
@@ -101,12 +122,23 @@ const PatientPortal: React.FC = () => {
 
   const handleSendMessage = () => {
     if (!message.trim()) return;
+    const urgency = symptomSeverity <= 3 ? 'critical' : symptomSeverity <= 5 ? 'high' : symptomSeverity <= 7 ? 'medium' : 'low';
     const sent = raiseReport({
       kind: 'message',
       message: `"${message.trim()}"`,
       toast: t('messageSent'),
     });
-    if (sent) setMessage('');
+    if (sent) {
+      sendPortalMessage({
+        patientId: patient!.id,
+        patientName: patient!.name,
+        senderName: patient!.name,
+        roomNumber: roomNumber,
+        urgency,
+        content: message.trim(),
+      });
+      setMessage('');
+    }
   };
 
   const handleSymptomSubmit = () => {
@@ -154,9 +186,15 @@ const PatientPortal: React.FC = () => {
     { id: 'family',      label: 'Family',         icon: <Users size={14} /> },
   ];
 
-  const visibleTabs = canCommunicate
-    ? TABS
-    : TABS.filter(tab => tab.id === 'status' || tab.id === 'info');
+  const FAMILY_TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
+    { id: 'status',         label: 'Status',        icon: <Activity size={14} /> },
+    { id: 'waiting-room',   label: 'Waiting Room',  icon: <Users size={14} /> },
+    { id: 'info',           label: 'Info',          icon: <Info size={14} /> },
+    { id: 'faq',            label: 'FAQ',           icon: <FileText size={14} /> },
+  ];
+
+  const PATIENT_TABS = canCommunicate ? TABS : TABS.filter(tab => tab.id === 'status' || tab.id === 'info');
+  const visibleTabs = isFamilyView ? FAMILY_TABS : PATIENT_TABS;
 
   const busyBadge = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: 'var(--bg-elevated)', borderRadius: 8, border: '1px solid var(--border)' }}>
@@ -306,8 +344,16 @@ const PatientPortal: React.FC = () => {
                     placeholder="Type an update or request..."
                   />
                   <button className="btn btn-primary" onClick={handleSendMessage}>
-                    Send
+                    <Send size={14} /> Send
                   </button>
+                </div>
+                <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span className="form-label" style={{ marginBottom: 0 }}>Room:</span>
+                  <input className="form-input" value={roomNumber} onChange={e => setRoomNumber(e.target.value)} style={{ width: 100, fontSize: 12, height: 30 }} />
+                  <span className="text-xs text-muted">— Severity:</span>
+                  <select className="form-select" value={symptomSeverity} onChange={e => setSymptomSeverity(+e.target.value)} style={{ width: 90, fontSize: 12, height: 30, padding: '2px 4px' }}>
+                    {[1,2,3,4,5,6,7,8,9,10].map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
                 </div>
               </div>
 
@@ -322,6 +368,26 @@ const PatientPortal: React.FC = () => {
                   {alertSent ? 'Nurse Alerted' : 'Report Severe Pain / Urgent Deterioration'}
                 </button>
               </div>
+
+              {sortedMessages.length > 0 && (
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                  <div className="section-title mb-8" style={{ fontSize: 12 }}>Message History (Urgency Sorted)</div>
+                  {sortedMessages.map(msg => (
+                    <div key={msg.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: URGENCY_COLORS[msg.urgency] }}>
+                          ● {URGENCY_LABELS[msg.urgency]}
+                        </span>
+                        <span className="text-xs text-muted font-mono">{new Date(msg.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                      <div className="text-xs" style={{ color: 'var(--text-secondary)', marginBottom: 2 }}>
+                        <strong style={{ color: 'var(--text-primary)' }}>{msg.senderName}</strong> · Room {msg.roomNumber}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{msg.content}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -350,19 +416,106 @@ const PatientPortal: React.FC = () => {
             </div>
           )}
 
-          {activeTab === 'family' && canCommunicate && (
+          {activeTab === 'family' && (
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {isFamilyView && (
+                <>
+                  <div>
+                    <label className="form-label">Family Access Code</label>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                      <code style={{ fontSize: 16, fontWeight: 700, padding: '4px 10px', background: 'var(--bg-elevated)', borderRadius: 4 }}>
+                        {familyCode}
+                      </code>
+                      <button className="btn btn-secondary" onClick={handleCopyCode}>
+                        <Copy size={14} /> {codeCopied ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+              {!isFamilyView && (
+                <>
+                  <div>
+                    <label className="form-label">Family Access Code</label>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                      <code style={{ fontSize: 16, fontWeight: 700, padding: '4px 10px', background: 'var(--bg-elevated)', borderRadius: 4 }}>
+                        {familyCode}
+                      </code>
+                      <button className="btn btn-secondary" onClick={handleCopyCode}>
+                        <Copy size={14} /> {codeCopied ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4 }}>
+                      Share this code with family members so they can view your status.
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'waiting-room' && (
             <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div>
-                <label className="form-label">Family Access Code</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
-                  <code style={{ fontSize: 16, fontWeight: 700, padding: '4px 10px', background: 'var(--bg-elevated)', borderRadius: 4 }}>
-                    {familyCode}
-                  </code>
-                  <button className="btn btn-secondary" onClick={handleCopyCode}>
-                    <Copy size={14} /> {codeCopied ? 'Copied' : 'Copy'}
-                  </button>
+                <div className="section-title mb-8"><Users size={14} /> Waiting Room Status</div>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                  {isFamilyView
+                    ? `${authedUser} — You are in the family waiting room. The patient will be notified when visitors are welcome.`
+                    : `Family members waiting for ${patient?.name ?? 'the patient'} are registered in the waiting room.`}
                 </div>
               </div>
+              {isFamilyView && (
+                <div style={{ paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                  <div className="section-title mb-8" style={{ fontSize: 12 }}>Family Check-In</div>
+                  <div className="form-grid">
+                    <div className="form-group">
+                      <label className="form-label">Your Name</label>
+                      <input className="form-input" value={familyName} onChange={e => setFamilyName(e.target.value)} placeholder="Full name" />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Relation to Patient</label>
+                      <select className="form-select" value={familyRelation} onChange={e => setFamilyRelation(e.target.value)}>
+                        <option value="">Select...</option>
+                        <option value="Spouse">Spouse</option>
+                        <option value="Parent">Parent</option>
+                        <option value="Child">Child</option>
+                        <option value="Sibling">Sibling</option>
+                        <option value="Friend">Friend</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    style={{ marginTop: 8, justifyContent: 'center' }}
+                    onClick={handleFamilyCheckin}
+                    disabled={!familyName.trim()}
+                  >
+                    <CheckCircle size={14} /> Check In to Waiting Room
+                  </button>
+                  {familyCheckedIn && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: 'var(--success)' }}>✓ Checked in — staff have been notified</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'faq' && (
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="section-title mb-8"><Info size={14} /> Frequently Asked Questions</div>
+              {[
+                { q: 'When will I be seen?', a: 'Based on your ESI level and current queue. ESI-1 patients are seen immediately, ESI-2 within 15 minutes, ESI-3 within 30 minutes, ESI-4 within 60 minutes, and ESI-5 within 2 hours.' },
+                { q: 'Where is the cafeteria?', a: 'The cafeteria is open 24/7 on Level 2, accessible from the main lobby elevator.' },
+                { q: 'Can family visit?', a: 'Visiting hours are 8 AM – 8 PM. ICU visits are limited to 2 visitors at a time. Check with the nurse station for current restrictions.' },
+                { q: 'How do I pay my bill?', a: 'Billing questions can be directed to the front desk on Level 1. Payment plans are available upon request.' },
+                { q: 'Parking?', a: 'Free parking validation is available at the information desk. Self-parking is on Level B1.' },
+              ].map((item, i) => (
+                <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>Q: {item.q}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>A: {item.a}</div>
+                </div>
+              ))}
             </div>
           )}
         </div>

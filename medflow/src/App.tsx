@@ -13,6 +13,7 @@ import EMSPage from './pages/EMSPage';
 import SentinelPage from './pages/SentinelPage';
 import PatientPortal from './pages/PatientPortal';
 import NurseTriage from './pages/NurseTriage';
+import DoctorTriage from './pages/DoctorTriage';
 import LoginPage from './pages/LoginPage';
 import './index.css';
 
@@ -116,6 +117,7 @@ const App: React.FC = () => {
         <Route path="/ems" element={<StaffRoute><EMSPage /></StaffRoute>} />
         <Route path="/sentinel" element={<StaffRoute><SentinelPage /></StaffRoute>} />
         <Route path="/nurse-triage" element={<StaffRoute><NurseTriage /></StaffRoute>} />
+        <Route path="/doctor-triage" element={<StaffRoute><DoctorTriage /></StaffRoute>} />
 
         {/* Patient portal: bound patient/family sessions, plus a read-only staff view */}
         <Route path="/portal" element={<PortalRoute />} />

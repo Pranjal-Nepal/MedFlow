@@ -5,6 +5,7 @@ import {
 import { LayoutDashboard, BedDouble, Stethoscope, Wind, Scan, Users, Activity } from 'lucide-react';
 import { useMedFlow } from '../store';
 import { Resource, ResourceType } from '../types';
+import { compareStrategies } from '../engine';
 
 const RESOURCE_ICONS: Record<ResourceType, React.ReactNode> = {
   'Acute ER Bays':      <BedDouble size={16} />,
@@ -18,13 +19,6 @@ const RESOURCE_ICONS: Record<ResourceType, React.ReactNode> = {
 
 const DEPARTMENTS = ['Trauma ER', 'ICU', 'OR Suites', 'Cardiology', 'Neurology', 'Orthopedics'];
 const DEPT_LOAD = [72, 87, 50, 45, 63, 38];
-
-const BENCHMARK_DATA = [
-  { metric: 'Avg Wait (min)',    'Dynamic': 18, 'Urgency': 22, 'Capacity': 31, 'FCFS': 45 },
-  { metric: 'ESI-1 Response',   'Dynamic': '4m', 'Urgency': '3m', 'Capacity': '8m', 'FCFS': '12m' },
-  { metric: 'Starvation Risk',  'Dynamic': 'Low', 'Urgency': 'High', 'Capacity': 'Med', 'FCFS': 'Low' },
-  { metric: 'Throughput/hr',    'Dynamic': 14, 'Urgency': 11, 'Capacity': 9, 'FCFS': 12 },
-];
 
 const ResourceCard: React.FC<{ resource: Resource }> = ({ resource: r }) => {
   const pct = r.total > 0 ? (r.occupied / r.total) * 100 : 0;
@@ -58,7 +52,7 @@ const ESIBadge: React.FC<{ esi: number }> = ({ esi }) => (
 );
 
 const Dashboard: React.FC = () => {
-  const { resources, patients, throughput, allocateBed, strategy } = useMedFlow();
+  const { resources, patients, throughput, allocateBed, dischargePatient, deletePatient, deletedPatients, strategy } = useMedFlow();
   const queue = patients.filter(p => !p.allocated).sort((a, b) => b.score - a.score);
 
   return (
@@ -157,14 +151,33 @@ const Dashboard: React.FC = () => {
                     </td>
                     <td><span className="score-badge">{p.score.toFixed(1)}</span></td>
                     <td>
-                      <button
-                        className={`btn btn-sm ${canAllocate ? 'btn-primary' : 'btn-ghost'}`}
-                        onClick={() => allocateBed(p.id)}
-                        disabled={!canAllocate}
-                        title={canAllocate ? `Allocate ${p.targetResource}` : 'No capacity available'}
-                      >
-                        {canAllocate ? 'Allocate Bed' : 'No Capacity'}
-                      </button>
+                      <div className="flex gap-4">
+                        <button
+                          className="btn btn-sm btn-primary"
+                          onClick={() => allocateBed(p.id)}
+                          disabled={!canAllocate}
+                          title={canAllocate ? `Allocate ${p.targetResource}` : 'No capacity available'}
+                        >
+                          {canAllocate ? 'Allocate' : 'Full'}
+                        </button>
+                        {p.allocated && (
+                          <button
+                            className="btn btn-sm btn-danger"
+                            onClick={() => dischargePatient(p.id)}
+                            title="Discharge patient & free bed"
+                          >
+                            Discharge
+                          </button>
+                        )}
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          onClick={() => deletePatient(p.id)}
+                          title="Delete patient record"
+                          style={{ color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.3)' }}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -178,31 +191,86 @@ const Dashboard: React.FC = () => {
       </div>
 
       <div className="card">
-        <div className="section-title mb-12"><Activity size={14} />Scheduling Strategy Benchmark Comparison</div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th className="matrix-header">Metric</th>
-                <th className="matrix-header" style={{ color: 'var(--accent-light)' }}>Dynamic Multi-Obj ★</th>
-                <th className="matrix-header">Urgency-Only</th>
-                <th className="matrix-header">Capacity-Preserving</th>
-                <th className="matrix-header">First-Come First-Served</th>
+        <div className="section-title mb-12"><Activity size={14} />Scheduling Strategy Comparison (Live)</div>
+        <ComparisonTable />
+      </div>
+
+      <DeletedPatientsArchive />
+    </div>
+  );
+};
+
+const ComparisonTable: React.FC = () => {
+  const { patients, resources, weights } = useMedFlow();
+  const comparison = compareStrategies(patients, resources, weights);
+  const [dynamic, urgency, capacity, fcfs] = comparison;
+
+  const metrics = [
+    { label: 'Avg Wait (min)', d: dynamic.avgWait, u: urgency.avgWait, c: capacity.avgWait, f: fcfs.avgWait },
+    { label: 'ESI-1 Response', d: dynamic.esi1Rank, u: urgency.esi1Rank, c: capacity.esi1Rank, f: fcfs.esi1Rank },
+    { label: 'Starvation Risk', d: dynamic.starvationRisk, u: urgency.starvationRisk, c: capacity.starvationRisk, f: fcfs.starvationRisk },
+    { label: 'Throughput/hr', d: dynamic.throughput, u: urgency.throughput, c: capacity.throughput, f: fcfs.throughput },
+  ];
+
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th className="matrix-header">Metric</th>
+            <th className="matrix-header" style={{ color: 'var(--accent-light)' }}>Dynamic Multi-Obj ★</th>
+            <th className="matrix-header">Urgency-Only</th>
+            <th className="matrix-header">Capacity-Preserving</th>
+            <th className="matrix-header">FCFS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {metrics.map((row) => (
+            <tr key={row.label}>
+              <td className="matrix-cell primary">{row.label}</td>
+              <td className="matrix-cell matrix-best">{row.d}</td>
+              <td className="matrix-cell">{row.u}</td>
+              <td className="matrix-cell">{row.c}</td>
+              <td className="matrix-cell">{row.f}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+const DeletedPatientsArchive: React.FC = () => {
+  const { deletedPatients, getDeletedPatients } = useMedFlow();
+  const records = getDeletedPatients();
+
+  if (records.length === 0) return null;
+
+  return (
+    <div className="card">
+      <div className="section-title mb-12"><Users size={14} />Deleted Patients Archive ({records.length})</div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th><th>MRN</th><th>Condition</th><th>Dept</th><th>ESI</th><th>Arrived</th><th>Deleted At</th><th>Bed Freed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {records.slice(0, 20).map(r => (
+              <tr key={r.id}>
+                <td className="primary">{r.name}</td>
+                <td className="font-mono">{r.mrn}</td>
+                <td>{r.condition}</td>
+                <td><span className="tag tag-info">{r.department}</span></td>
+                <td><span className={`esi-badge esi-${r.esi}`}>{r.esi}</span></td>
+                <td className="font-mono text-xs">{new Date(r.arrivalTime).toLocaleString()}</td>
+                <td className="font-mono text-xs">{new Date(r.deletionTime).toLocaleString()}</td>
+                <td>{r.wasAllocated ? <span style={{ color: 'var(--success)' }}>✓ {r.allocatedBay}</span> : '—'}</td>
               </tr>
-            </thead>
-            <tbody>
-              {BENCHMARK_DATA.map(row => (
-                <tr key={row.metric}>
-                  <td className="matrix-cell primary">{row.metric}</td>
-                  <td className="matrix-cell matrix-best">{row['Dynamic']}</td>
-                  <td className="matrix-cell">{row['Urgency']}</td>
-                  <td className="matrix-cell">{row['Capacity']}</td>
-                  <td className="matrix-cell">{row['FCFS']}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

@@ -1,6 +1,50 @@
-import { ESILevel, Patient, Resource, ResourceType } from './types';
+import { ESILevel, Patient, Resource, ResourceType, Department, AmbulanceArrivalPattern } from './types';
 
 export const ESI_URGENCY: Record<ESILevel, number> = { 1: 100, 2: 78, 3: 45, 4: 20, 5: 5 };
+
+export const DEPARTMENT_ARRIVAL_PATTERNS: Record<Department, AmbulanceArrivalPattern> = {
+  'Trauma ER':     { hour: 0, expectedArrivals: 4, intervalMinutes: 30, peakMultiplier: 1.8 },
+  'ICU':           { hour: 0, expectedArrivals: 2, intervalMinutes: 60, peakMultiplier: 1.3 },
+  'OR Suites':     { hour: 0, expectedArrivals: 1, intervalMinutes: 90, peakMultiplier: 1.5 },
+  'Cardiology':    { hour: 0, expectedArrivals: 2, intervalMinutes: 60, peakMultiplier: 2.0 },
+  'Neurology':     { hour: 0, expectedArrivals: 1, intervalMinutes: 75, peakMultiplier: 1.4 },
+  'Orthopedics':   { hour: 0, expectedArrivals: 1, intervalMinutes: 120, peakMultiplier: 1.2 },
+};
+
+export const PEAK_HOURS: number[] = [8, 9, 10, 11, 12, 13, 14, 17, 18, 19, 20];
+
+export const computeArrivalRate = (hour: number, baseRate: number, peakMultiplier: number): number => {
+  const isPeak = PEAK_HOURS.includes(hour);
+  return isPeak ? Math.round(baseRate * peakMultiplier) : baseRate;
+};
+
+export const generateArrivalPattern = (): AmbulanceArrivalPattern[] => {
+  return Object.entries(DEPARTMENT_ARRIVAL_PATTERNS).map(([dept, pattern]) => {
+    const hour = new Date().getHours();
+    const adjustedRate = computeArrivalRate(hour, pattern.expectedArrivals, pattern.peakMultiplier);
+    return {
+      ...pattern,
+      hour,
+      expectedArrivals: adjustedRate,
+    };
+  });
+};
+
+export const predictAmbulanceArrivals = (
+  patterns: AmbulanceArrivalPattern[],
+  minutesAhead: number
+): { hour: number; expectedCount: number }[] => {
+  const hour = new Date().getHours();
+  const futureHour = (hour + Math.floor(minutesAhead / 60)) % 24;
+  return patterns.map(p => {
+    const isPeak = PEAK_HOURS.includes(futureHour);
+    const multiplier = isPeak ? p.peakMultiplier : 1;
+    return {
+      hour: futureHour,
+      expectedCount: Math.max(0, Math.round(p.expectedArrivals * multiplier * (minutesAhead / 60))),
+    };
+  });
+};
 
 export const sigmoid = (z: number): number => 1 / (1 + Math.exp(-4 * (z - 0.5)));
 
@@ -94,4 +138,15 @@ export const compareStrategies = (
     const starvationRisk = sorted.filter(p => p.esi >= 4 && p.waitMinutes > 60).length;
     return { strategy: s, avgWait: +avgWait.toFixed(1), esi1Rank: esi1ResponseRank === -1 ? 'N/A' : `#${esi1ResponseRank + 1}`, starvationRisk, throughput: sorted.length };
   });
+};
+
+export const inferDepartmentFromCondition = (condition: string): Department => {
+  const lower = condition.toLowerCase();
+  if (['cardiac arrest','heart attack','stemi','chest pain','angina','acute coronary'].some(k => lower.includes(k))) return 'Cardiology';
+  if (['stroke','hemorrhagic','brain bleed','intracranial','tbi','traumatic brain'].some(k => lower.includes(k))) return 'Neurology';
+  if (['septic shock','sepsis','appendicitis','acute abdomen','bowel obstruction'].some(k => lower.includes(k))) return 'ICU';
+  if (['polytrauma','multiple trauma','blast','explosion','burns','burn injury'].some(k => lower.includes(k))) return 'Trauma ER';
+  if (['fracture','broken bone','sprain','strain','ankle'].some(k => lower.includes(k))) return 'Orthopedics';
+  if (['respiratory arrest','not breathing','apnea','airway obstruction','respiratory distress','difficulty breathing'].some(k => lower.includes(k))) return 'Trauma ER';
+  return 'Trauma ER';
 };

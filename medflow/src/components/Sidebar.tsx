@@ -1,7 +1,7 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
-  LayoutDashboard, FlaskConical, Ambulance, Bot, Users, Shield,
+  LayoutDashboard, FlaskConical, Stethoscope, Ambulance, Bot, Users, Shield,
   Zap, AlertTriangle, Activity, Cpu, ClipboardPlus
 } from 'lucide-react';
 import { useMedFlow } from '../store';
@@ -9,10 +9,11 @@ import { useMedFlow } from '../store';
 const NAV_ITEMS = [
   { to: '/',             icon: LayoutDashboard, label: 'Operations Command', roles: ['director','clinical'] },
   { to: '/workbench',   icon: FlaskConical,    label: 'Data Workbench',     roles: ['director','clinical'] },
-  { to: '/nurse-triage',icon: ClipboardPlus,   label: 'Walk-In Triage',     roles: ['director','clinical'] },
+  { to: '/nurse-triage',icon: ClipboardPlus,   label: 'Nurse Triage',       roles: ['director','clinical'] },
+  { to: '/doctor-triage',icon: Stethoscope,    label: 'Doctor Triage',      roles: ['director','clinical'] },
   { to: '/ems',         icon: Ambulance,       label: 'EMS Fleet',          roles: ['director','clinical'] },
   { to: '/sentinel',    icon: Bot,             label: 'Sentinel AI',        roles: ['director','clinical'] },
-  { to: '/portal',      icon: Users,           label: 'Patient Portal',     roles: ['director','clinical','patient'] },
+  { to: '/portal',      icon: Users,           label: 'Patient Portal',     roles: ['director','clinical','patient','family'] },
 ];
 
 const SIM_TRIGGERS = [

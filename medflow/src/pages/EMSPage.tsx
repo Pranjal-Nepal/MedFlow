@@ -1,5 +1,5 @@
 import React from 'react';
-import { Ambulance, MapPin, Clock, Zap, CheckCircle } from 'lucide-react';
+import { Ambulance, MapPin, Clock, Zap, CheckCircle, Activity } from 'lucide-react';
 import { useMedFlow } from '../store';
 import { ESILevel } from '../types';
 
@@ -32,7 +32,7 @@ const RadarSVG: React.FC = () => (
 );
 
 const EMSPage: React.FC = () => {
-  const { ambulances, fastForwardAmbulance } = useMedFlow();
+  const { ambulances, fastForwardAmbulance, arrivalPatterns } = useMedFlow();
 
   return (
     <div className="flex-col gap-20">
@@ -81,6 +81,30 @@ const EMSPage: React.FC = () => {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="section-title mb-12"><Activity size={14} />Ambulance Arrival Patterns</div>
+        <div className="grid-3">
+          {arrivalPatterns.map((pattern, i) => {
+            const currentHour = new Date().getHours();
+            const isPeak = [8,9,10,11,12,13,14,17,18,19,20].includes(currentHour);
+            return (
+              <div key={i} className="card" style={{ padding: 12 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+                  {isPeak ? 'PEAK' : 'OFF-PEAK'} · {currentHour}:00
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--accent-light)', fontFamily: 'JetBrains Mono' }}>
+                  {pattern.expectedArrivals}
+                </div>
+                <div className="text-xs text-muted">expected arrivals/hr</div>
+                <div className="text-xs" style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                  Interval: {pattern.intervalMinutes}min · Peak ×{pattern.peakMultiplier}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 

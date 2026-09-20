@@ -7,9 +7,10 @@ import toast from 'react-hot-toast';
 import {
   Patient, Resource, AmbulanceUnit, AuditEvent, ThroughputPoint,
   ChatMessage, Strategy, Role, ESILevel, Department, ResourceType, AuditEventType,
-  AuthResult, NewPatientInput, PatientReport, PatientReportKind, PortalAccess, StaffRole
+  AuthResult, NewPatientInput, PatientReport, PatientReportKind, PortalAccess, StaffRole,
+  BedAllocation, PortalMessage, AmbulanceArrivalPattern, DeletedPatientRecord,
 } from './types';
-import { computeScore, sortByStrategy, overallUtilization } from './engine';
+import { computeScore, sortByStrategy, overallUtilization, generateArrivalPattern, inferDepartmentFromCondition } from './engine';
 import {
   authenticateStaff, canActOnPatientRecord, deriveDateOfBirth, deriveMrn,
   findPatientByCredentials, findPatientByFamilyCode,
@@ -96,6 +97,14 @@ interface MedFlowState {
   resources: Resource[];
   updateResource: (type: ResourceType, delta: number) => void;
 
+  // Bed Allocation Log
+  bedAllocations: BedAllocation[];
+  getBedAllocations: () => BedAllocation[];
+
+  // Deleted Patients Archive
+  deletedPatients: DeletedPatientRecord[];
+  getDeletedPatients: () => DeletedPatientRecord[];
+
   // Patients / Queue
   patients: Patient[];
   strategy: Strategy;
@@ -106,6 +115,7 @@ interface MedFlowState {
   addPatient: (p: NewPatientInput) => Patient;
   allocateBed: (patientId: string) => void;
   dischargePatient: (patientId: string) => void;
+  deletePatient: (patientId: string) => void;
   tickWaitTimes: () => void;
   sortedQueue: () => Patient[];
   utilizationStats: () => { type: ResourceType; pct: number; available: number; total: number }[];
@@ -113,8 +123,10 @@ interface MedFlowState {
 
   // Ambulances
   ambulances: AmbulanceUnit[];
+  arrivalPatterns: AmbulanceArrivalPattern[];
   tickAmbulances: () => void;
   fastForwardAmbulance: (id: string) => void;
+  generateArrivalPatterns: () => void;
 
   // Throughput
   throughput: ThroughputPoint[];
@@ -126,6 +138,11 @@ interface MedFlowState {
   // AI Chat
   chatMessages: ChatMessage[];
   sendChat: (msg: string) => void;
+
+  // Portal Messages
+  portalMessages: PortalMessage[];
+  sendPortalMessage: (msg: Omit<PortalMessage, 'id' | 'timestamp'>) => void;
+  getSortedPortalMessages: (patientId: string) => PortalMessage[];
 
   // Diversion
   diversionActive: boolean;
@@ -248,6 +265,12 @@ export const useMedFlow = create<MedFlowState>()(
       : r)
   })),
 
+  bedAllocations: [] as BedAllocation[],
+  getBedAllocations: () => get().bedAllocations,
+
+  deletedPatients: [] as DeletedPatientRecord[],
+  getDeletedPatients: () => get().deletedPatients,
+
   patients: SEED_PATIENTS,
   strategy: 'Dynamic Multi-Objective',
   weights: { wu: 1.0, ww: 0.5, wr: 0.3 },
@@ -291,10 +314,20 @@ export const useMedFlow = create<MedFlowState>()(
     }
     const bayNum = res.occupied + 1;
     const bayLabel = patient.targetResource.split(' ')[0] + ' Bay ' + bayNum;
-    const updatedResources = resources.map(r => r.type === patient.targetResource ? { ...r, occupied: r.occupied + 1 } : r);
+    const updatedResources = resources.map(r => r.type === patient.targetResource ? { ...r, occupied: Math.min(r.occupied + 1, r.total) } : r);
+    const bedAlloc: BedAllocation = {
+      id: uuid(),
+      patientId: patient.id,
+      patientName: patient.name,
+      resourceType: patient.targetResource,
+      bayLabel,
+      timestamp: Date.now(),
+      esi: patient.esi,
+    };
     set(s => ({
       patients: s.patients.map(p => p.id === patientId ? { ...p, allocated: true, allocatedBay: bayLabel, allocatedAt: Date.now() } : p),
       resources: updatedResources,
+      bedAllocations: [bedAlloc, ...s.bedAllocations],
       overallUtil: overallUtilization(updatedResources),
     }));
     addAudit('BED_ALLOC', patient.name + ' (ESI ' + patient.esi + ') allocated to ' + bayLabel, 'info', 'Clinical Staff');
@@ -306,6 +339,47 @@ export const useMedFlow = create<MedFlowState>()(
       toast.error('ICU >=80% - Regional Diversion ACTIVATED', { duration: 8000 });
     }
   },
+
+  deletePatient: (patientId) => {
+    const { patients, addAudit } = get();
+    const patient = patients.find(p => p.id === patientId);
+    if (!patient) return;
+    const record: DeletedPatientRecord = {
+      id: uuid(),
+      patientId: patient.id,
+      name: patient.name,
+      mrn: patient.mrn,
+      condition: patient.condition,
+      department: patient.department,
+      esi: patient.esi,
+      arrivalTime: patient.arrivalTime,
+      deletionTime: Date.now(),
+      wasAllocated: patient.allocated,
+      allocatedBay: patient.allocatedBay,
+    };
+    set(s => ({
+      patients: s.patients.filter(p => p.id !== patientId),
+      resources: patient.allocated ? s.resources.map(r => r.type === patient.targetResource ? { ...r, occupied: Math.max(0, r.occupied - 1) } : r) : s.resources,
+      deletedPatients: [record, ...s.deletedPatients].slice(0, 100),
+      overallUtil: overallUtilization(s.resources),
+    }));
+    addAudit('DISCHARGE', `Patient DELETED & ARCHIVED: ${patient.name} | MRN ${patient.mrn} | Condition: ${patient.condition} | Dept: ${patient.department} | ESI ${patient.esi} | Arrived ${new Date(patient.arrivalTime).toLocaleString()}` + (patient.allocated ? ` | Bed freed from ${patient.allocatedBay}` : ''), 'info', 'Clinical Staff');
+    toast.success(`${patient.name} deleted & archived` + (patient.allocated ? ` · Bed freed from ${patient.allocatedBay}` : ''), { duration: 4000 });
+  },
+
+  dischargePatient: (patientId) => {
+    const { patients, addAudit } = get();
+    const patient = patients.find(p => p.id === patientId);
+    if (!patient || !patient.allocated) return;
+    set(s => ({
+      patients: s.patients.filter(p => p.id !== patientId),
+      resources: s.resources.map(r => r.type === patient.targetResource ? { ...r, occupied: Math.max(0, r.occupied - 1) } : r),
+      overallUtil: overallUtilization(s.resources),
+    }));
+    addAudit('DISCHARGE', patient.name + ' discharged from ' + patient.allocatedBay + ' - bed freed', 'info', 'Clinical Staff');
+    toast.success(patient.name + ' discharged - bed freed', { duration: 3000 });
+  },
+
   sortedQueue: () => {
     const { patients, resources, strategy, weights } = get();
     return sortByStrategy(patients.filter(p => !p.allocated), strategy, resources, weights);
@@ -321,20 +395,6 @@ export const useMedFlow = create<MedFlowState>()(
     }));
   },
 
-
-  dischargePatient: (patientId) => {
-    const { patients, addAudit } = get();
-    const patient = patients.find(p => p.id === patientId);
-    if (!patient || !patient.allocated) return;
-    set(s => ({
-      patients: s.patients.filter(p => p.id !== patientId),
-      resources: s.resources.map(r => r.type === patient.targetResource ? { ...r, occupied: Math.max(0, r.occupied - 1) } : r),
-      overallUtil: overallUtilization(s.resources),
-    }));
-    addAudit('DISCHARGE', patient.name + ' discharged from ' + patient.allocatedBay + ' - bed freed', 'info', 'Clinical Staff');
-    toast.success(patient.name + ' discharged - bed freed', { duration: 3000 });
-  },
-
   tickWaitTimes: () => set(s => {
     const { resources, weights } = s;
     return {
@@ -347,6 +407,7 @@ export const useMedFlow = create<MedFlowState>()(
   }),
 
   ambulances: SEED_AMBULANCES,
+  arrivalPatterns: generateArrivalPattern(),
   tickAmbulances: () => set(s => ({
     ambulances: s.ambulances.map(a => a.arrived ? a : { ...a, etaSeconds: Math.max(0, a.etaSeconds - 5) })
   })),
@@ -358,7 +419,7 @@ export const useMedFlow = create<MedFlowState>()(
     addPatient({
       name: unit.patientName, age: 35 + Math.floor(Math.random() * 30),
       esi: unit.esi, condition: unit.condition,
-      department: unit.esi <= 2 ? 'Trauma ER' : 'Trauma ER',
+      department: inferDepartmentFromCondition(unit.condition),
       targetResource: unit.esi <= 2 ? 'Acute ER Bays' : 'Acute ER Bays',
       vitals: { bp: '90/60', hr: 110, spo2: 92, temp: 37.2 },
       deteriorationRisk: unit.esi === 1 ? 0.9 : 0.65,
@@ -366,6 +427,7 @@ export const useMedFlow = create<MedFlowState>()(
     addAudit('TRIAGE', `EMS Unit arrived: ${unit.patientName} from ${unit.origin} → ${unit.targetBay}`, 'warning', 'EMS Dispatch');
     toast(`🚑 EMS Arrived: ${unit.patientName} → ${unit.targetBay}`, { duration: 4000 });
   },
+  generateArrivalPatterns: () => set({ arrivalPatterns: generateArrivalPattern() }),
 
   throughput: SEED_THROUGHPUT,
 
@@ -393,7 +455,29 @@ export const useMedFlow = create<MedFlowState>()(
   overallUtil: overallUtilization(INITIAL_RESOURCES),
   conflictLog: [] as string[],
 
-  // ── Simulation Triggers ───────────────────────────────────────────────────
+  portalMessages: [],
+  sendPortalMessage: (msg) => {
+    const { patients, addAudit } = get();
+    const patient = patients.find(p => p.id === msg.patientId);
+    const patientName = patient?.name || 'Unknown';
+    const message: PortalMessage = {
+      ...msg,
+      id: uuid(),
+      timestamp: Date.now(),
+      patientName,
+    };
+    set(s => ({ portalMessages: [...s.portalMessages, message] }));
+    addAudit('TRIAGE', `Patient message [${msg.urgency}]: "${msg.content.slice(0, 60)}..." from ${msg.senderName} in ${msg.roomNumber}`, msg.urgency === 'critical' ? 'critical' : msg.urgency === 'high' ? 'warning' : 'info', patientName);
+  },
+  getSortedPortalMessages: (patientId) => {
+    const { portalMessages } = get();
+    const urgencyOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    return portalMessages
+      .filter(m => m.patientId === patientId)
+      .sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency] || b.timestamp - a.timestamp);
+  },
+
+  // ── Simulation Triggers ───────────────────────────────────────────
 
   triggerMCI: () => {
     const { addPatient, addAudit } = get();

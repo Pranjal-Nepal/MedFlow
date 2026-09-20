@@ -55,6 +55,24 @@ export interface AmbulanceUnit {
   etaSeconds: number;
   targetBay: string;
   arrived: boolean;
+  arrivalPattern?: AmbulanceArrivalPattern;
+}
+
+export interface AmbulanceArrivalPattern {
+  hour: number;
+  expectedArrivals: number;
+  intervalMinutes: number;
+  peakMultiplier: number;
+}
+
+export interface BedAllocation {
+  id: string;
+  patientId: string;
+  patientName: string;
+  resourceType: ResourceType;
+  bayLabel: string;
+  timestamp: number;
+  esi: ESILevel;
 }
 
 export interface AuditEvent {
@@ -64,6 +82,20 @@ export interface AuditEvent {
   message: string;
   severity: 'info' | 'warning' | 'critical';
   actor: string;
+}
+
+export interface DeletedPatientRecord {
+  id: string;
+  patientId: string;
+  name: string;
+  mrn: string;
+  condition: string;
+  department: Department;
+  esi: ESILevel;
+  arrivalTime: number;
+  deletionTime: number;
+  wasAllocated: boolean;
+  allocatedBay?: string;
 }
 
 export interface ThroughputPoint {
@@ -78,6 +110,24 @@ export interface ChatMessage {
   role: 'user' | 'ai';
   content: string;
   timestamp: number;
+}
+
+export interface PortalMessage {
+  id: string;
+  patientId: string;
+  patientName: string;
+  senderName: string;
+  roomNumber: string;
+  urgency: 'low' | 'medium' | 'high' | 'critical';
+  content: string;
+  timestamp: number;
+}
+
+export interface DepartmentConfig {
+  name: Department;
+  head: string;
+  phoneExtension: string;
+  color: string;
 }
 
 export type NewPatientInput = Omit<
